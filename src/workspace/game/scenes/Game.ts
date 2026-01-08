@@ -281,35 +281,121 @@ export default class Game extends Phaser.Scene {
     this.registerKeys()
 
     // Listen for network events
+    console.log('[Game] 📡 Registering event listeners for playerUpdated, playerLeft, playerJoined')
     window.addEventListener('playerUpdated', this.handlePlayerUpdated.bind(this) as EventListener)
     window.addEventListener('playerLeft', this.handlePlayerLeft.bind(this) as EventListener)
     window.addEventListener('playerJoined', this.handlePlayerJoined.bind(this) as EventListener)
+    console.log('[Game] ✅ Event listeners registered')
+    
+    // Set up periodic cleanup to remove duplicates and orphaned players
+    // This runs every 2 seconds to catch any missed cleanup
+    const cleanupInterval = setInterval(() => {
+      this.cleanupDuplicateAndOrphanedPlayers()
+    }, 2000)
+    
+    // Store interval for cleanup on scene destroy
+    ;(this as any).cleanupInterval = cleanupInterval
 
     // Create OtherPlayer instances for existing players
     // IMPORTANT: Only create OtherPlayers, NOT MyPlayer duplicates
     // Use setTimeout to ensure Network listeners are set up first
-    setTimeout(() => {
+    const createOtherPlayersForExisting = () => {
       if (this.network.room && this.network.room.state.players) {
-        console.log('[Game] Creating OtherPlayers for existing players. Total players:', this.network.room.state.players.size)
+        // Count players manually since TypeScript doesn't know about size property
+        let playerCount = 0
+        const playerIds: string[] = []
+        this.network.room.state.players.forEach((_player, playerId) => {
+          playerCount++
+          playerIds.push(playerId)
+        })
+        
+        console.log('[Game] 🎮 Creating OtherPlayers for existing players. Total players:', playerCount)
+        console.log('[Game] My session ID:', this.network.mySessionId)
+        console.log('[Game] All player IDs in room:', playerIds)
+        
+        // CRITICAL: Clean up any OtherPlayers that are no longer in the room state
+        // Also check for duplicates by userId (same user with different sessionId)
+        const playersToRemove: string[] = []
+        const userIdToSessionMap = new Map<string, string>() // Track userId -> sessionId mapping
+        
+        if (this.network.room && this.network.room.state && this.network.room.state.players) {
+          // First, build a map of userId -> sessionId from current room state
+          this.network.room.state.players.forEach((player, playerId) => {
+            if (player.userId && player.userId !== '') {
+              const existingSessionId = userIdToSessionMap.get(player.userId)
+              if (existingSessionId) {
+                // Duplicate userId found - keep the newer one (current playerId)
+                console.log(`[Game] 🔍 Found duplicate userId ${player.userId}: existing=${existingSessionId}, new=${playerId}`)
+                // Remove the older session
+                if (this.otherPlayerMap.has(existingSessionId)) {
+                  console.log(`[Game] 🧹 Marking old session for removal (duplicate userId): ${existingSessionId}`)
+                  playersToRemove.push(existingSessionId)
+                }
+              }
+              userIdToSessionMap.set(player.userId, playerId)
+            }
+          })
+          
+          // Check for orphaned players (not in room state anymore)
+          this.otherPlayerMap.forEach((_otherPlayer, mapPlayerId) => {
+            // Check if this playerId still exists in the room state
+            const stillExists = this.network.room?.state?.players?.get(mapPlayerId)
+            if (!stillExists) {
+              console.log(`[Game] 🧹 Found orphaned OtherPlayer (not in room state): ${mapPlayerId}`)
+              playersToRemove.push(mapPlayerId)
+            }
+          })
+        }
+        
+        // Remove orphaned OtherPlayers
+        playersToRemove.forEach(playerId => {
+          const otherPlayer = this.otherPlayerMap.get(playerId)
+          if (otherPlayer) {
+            console.log(`[Game] 🗑️ Removing orphaned OtherPlayer: ${playerId}`)
+            
+            // Destroy the playerContainer (which contains the name text) before removing the sprite
+            if (otherPlayer.playerContainer) {
+              console.log(`[Game] 🗑️ Destroying orphaned playerContainer (name label) for: ${playerId}`)
+              otherPlayer.playerContainer.destroy(true)
+            }
+            
+            // Remove and destroy the sprite
+            this.otherPlayers.remove(otherPlayer, true, true)
+            this.otherPlayerMap.delete(playerId)
+          }
+        })
+        
+        if (playersToRemove.length > 0) {
+          console.log(`[Game] ✅ Cleaned up ${playersToRemove.length} orphaned OtherPlayers`)
+        }
+        
+        let createdCount = 0
+        let skippedCount = 0
+        
         this.network.room.state.players.forEach((player, playerId) => {
+          console.log(`[Game] 🔍 Processing player: ${playerId} (${player.name || 'unnamed'})`)
+          
           // Skip creating a sprite for our own player - we already created myPlayer above
           if (playerId === this.network.mySessionId) {
-            console.log('[Game] Skipping own player:', playerId)
+            console.log('[Game] ⏭️ Skipping own player:', playerId)
+            skippedCount++
             return
           }
           
           // Check if we already created this other player (prevent duplicates)
           if (this.otherPlayerMap.has(playerId)) {
-            console.log('[Game] Player already exists in map:', playerId)
+            console.log('[Game] ✅ Player already exists in map:', playerId)
+            skippedCount++
             return
           }
           
-          console.log('[Game] Creating OtherPlayer for existing player:', {
+          console.log('[Game] 🎨 Creating OtherPlayer for existing player:', {
             playerId,
             name: player.name,
             texture: player.texture,
             x: player.x,
-            y: player.y
+            y: player.y,
+            anim: player.anim
           })
           
           // Create player even if name is empty - it will be updated later
@@ -323,15 +409,32 @@ export default class Game extends Phaser.Scene {
           if (otherPlayer) {
             this.otherPlayers.add(otherPlayer)
             this.otherPlayerMap.set(playerId, otherPlayer)
-            console.log('[Game] OtherPlayer created successfully. Total other players:', this.otherPlayerMap.size)
+            createdCount++
+            console.log(`[Game] ✅ OtherPlayer created successfully for ${playerId}. Total other players: ${this.otherPlayerMap.size}`)
+            
+            // Set initial animation if available
+            if (player.anim) {
+              otherPlayer.anims.play(player.anim, true)
+            }
           } else {
-            console.error('[Game] Failed to create OtherPlayer for:', playerId)
+            console.error(`[Game] ❌ Failed to create OtherPlayer for: ${playerId}`)
           }
         })
+        
+        console.log(`[Game] 📊 OtherPlayer creation summary: Created=${createdCount}, Skipped=${skippedCount}, Total in map=${this.otherPlayerMap.size}`)
+        console.log(`[Game] 📋 Final otherPlayerMap keys:`, Array.from(this.otherPlayerMap.keys()))
+        console.log(`[Game] 👤 MyPlayer session ID: ${this.network.mySessionId}`)
+        console.log(`[Game] 📊 Total visible players: 1 (myPlayer) + ${this.otherPlayerMap.size} (otherPlayers) = ${1 + this.otherPlayerMap.size}`)
       } else {
-        console.warn('[Game] Room or players state not available yet')
+        console.warn('[Game] ⚠️ Room or players state not available yet')
       }
-    }, 200) // Small delay to ensure Network listeners are ready
+    }
+    
+    // Initial creation after delay
+    setTimeout(createOtherPlayersForExisting, 200)
+    
+    // Also re-check after a longer delay to catch any players that joined after initial creation
+    setTimeout(createOtherPlayersForExisting, 1000)
   }
 
   registerKeys() {
@@ -419,8 +522,75 @@ export default class Game extends Phaser.Scene {
   private handlePlayerUpdated(event: Event) {
     const customEvent = event as CustomEvent
     const { field, value, playerId } = customEvent.detail
-    const otherPlayer = this.otherPlayerMap.get(playerId)
+    console.log('[Game] 🎮 handlePlayerUpdated event received:', { field, value, playerId })
+    
+    let otherPlayer = this.otherPlayerMap.get(playerId)
+    
+    // If OtherPlayer doesn't exist, try to create it from room state
+    if (!otherPlayer) {
+      console.warn(`[Game] ⚠️ OtherPlayer not found in map for playerId: ${playerId}`)
+      console.log('[Game] Current otherPlayerMap keys:', Array.from(this.otherPlayerMap.keys()))
+      
+      // CRITICAL: Before creating a new player, check if this userId already has a player
+      // This handles the case where Tab 1 refreshed and Tab 2 still has the old sessionId
+      if (this.network.room && this.network.room.state.players) {
+        const newPlayer = this.network.room.state.players.get(playerId)
+        if (newPlayer && newPlayer.userId && newPlayer.userId !== '') {
+          // Check for existing player with same userId but different sessionId
+          let duplicateFound = false
+          this.otherPlayerMap.forEach((existingPlayer, existingPlayerId) => {
+            const existingPlayerData = this.network.room?.state?.players?.get(existingPlayerId)
+            if (existingPlayerData?.userId === newPlayer.userId && existingPlayerId !== playerId) {
+              console.log(`[Game] 🔍 Found duplicate userId ${newPlayer.userId} in handlePlayerUpdated: removing old session ${existingPlayerId}, keeping new ${playerId}`)
+              // Remove the old player
+              if (existingPlayer.playerContainer) {
+                console.log(`[Game] 🗑️ Destroying duplicate playerContainer for: ${existingPlayerId}`)
+                existingPlayer.playerContainer.destroy(true)
+              }
+              this.otherPlayers.remove(existingPlayer, true, true)
+              this.otherPlayerMap.delete(existingPlayerId)
+              duplicateFound = true
+            }
+          })
+          
+          if (duplicateFound) {
+            console.log(`[Game] ✅ Cleaned up duplicate player before creating new one`)
+          }
+        }
+      }
+      
+      // Try to create the missing OtherPlayer from room state
+      if (this.network.room && this.network.room.state.players) {
+        const player = this.network.room.state.players.get(playerId)
+        if (player && playerId !== this.network.mySessionId) {
+          console.log(`[Game] 🔧 Creating missing OtherPlayer for ${playerId} from room state`)
+          otherPlayer = this.add.otherPlayer(
+            player.x || 0,
+            player.y || 0,
+            player.texture || 'adam',
+            playerId,
+            player.name || 'Player'
+          )
+          if (otherPlayer) {
+            this.otherPlayers.add(otherPlayer)
+            this.otherPlayerMap.set(playerId, otherPlayer)
+            console.log(`[Game] ✅ Created missing OtherPlayer for ${playerId}`)
+          } else {
+            console.error(`[Game] ❌ Failed to create missing OtherPlayer for ${playerId}`)
+            return
+          }
+        } else {
+          console.error(`[Game] ❌ Player ${playerId} not found in room state or is own player`)
+          return
+        }
+      } else {
+        console.error(`[Game] ❌ Room or players state not available`)
+        return
+      }
+    }
+    
     if (otherPlayer) {
+      console.log('[Game] ✅ Found OtherPlayer, calling updateOtherPlayer')
       otherPlayer.updateOtherPlayer(field, value)
     }
   }
@@ -433,10 +603,11 @@ export default class Game extends Phaser.Scene {
       playerId,
       name: player.name,
       texture: player.texture,
+      userId: player.userId,
       mySessionId: this.network.mySessionId
     })
     
-    // Prevent duplicates: check if player already exists
+    // Prevent duplicates: check if player already exists by sessionId
     if (this.otherPlayerMap.has(playerId)) {
       console.warn(`[Game] Player ${playerId} already exists, skipping duplicate`)
       return
@@ -446,6 +617,31 @@ export default class Game extends Phaser.Scene {
     if (playerId === this.network.mySessionId) {
       console.warn(`[Game] Attempted to create OtherPlayer for own session ${playerId}, skipping`)
       return
+    }
+    
+    // CRITICAL: Check for duplicates by userId (same user with different sessionId)
+    // This handles the case where a player refreshed and we have their old sessionId still
+    if (player.userId && player.userId !== '') {
+      let duplicateFound = false
+      this.otherPlayerMap.forEach((existingPlayer, existingPlayerId) => {
+        // Get the userId from room state for the existing player
+        const existingPlayerData = this.network.room?.state?.players?.get(existingPlayerId)
+        if (existingPlayerData?.userId === player.userId && existingPlayerId !== playerId) {
+          console.log(`[Game] 🔍 Found duplicate userId ${player.userId}: removing old session ${existingPlayerId}, keeping new ${playerId}`)
+          // Remove the old player
+          if (existingPlayer.playerContainer) {
+            console.log(`[Game] 🗑️ Destroying duplicate playerContainer for: ${existingPlayerId}`)
+            existingPlayer.playerContainer.destroy(true)
+          }
+          this.otherPlayers.remove(existingPlayer, true, true)
+          this.otherPlayerMap.delete(existingPlayerId)
+          duplicateFound = true
+        }
+      })
+      
+      if (duplicateFound) {
+        console.log(`[Game] ✅ Cleaned up duplicate player before creating new one`)
+      }
     }
 
     console.log('[Game] Creating OtherPlayer for new player:', {
@@ -475,12 +671,88 @@ export default class Game extends Phaser.Scene {
   private handlePlayerLeft(event: Event) {
     const customEvent = event as CustomEvent
     const { playerId } = customEvent.detail
+    console.log('[Game] 🚪 handlePlayerLeft: player removed', {
+      playerId,
+      mySessionId: this.network.mySessionId,
+      isOwnPlayer: playerId === this.network.mySessionId,
+      existsInMap: this.otherPlayerMap.has(playerId)
+    })
+    
+    // Don't remove our own player sprite (it's myPlayer, not otherPlayer)
+    if (playerId === this.network.mySessionId) {
+      console.log('[Game] ⏭️ Skipping removal of own player sprite')
+      return
+    }
+    
     if (this.otherPlayerMap.has(playerId)) {
       const otherPlayer = this.otherPlayerMap.get(playerId)
       if (otherPlayer) {
+        console.log('[Game] 🗑️ Removing OtherPlayer sprite for:', playerId)
+        
+        // Destroy the playerContainer (which contains the name text) before removing the sprite
+        if (otherPlayer.playerContainer) {
+          console.log('[Game] 🗑️ Destroying playerContainer (name label) for:', playerId)
+          otherPlayer.playerContainer.destroy(true)
+        }
+        
+        // Remove and destroy the sprite
         this.otherPlayers.remove(otherPlayer, true, true)
         this.otherPlayerMap.delete(playerId)
+        console.log(`[Game] ✅ OtherPlayer removed. Remaining players: ${this.otherPlayerMap.size}`)
       }
+    } else {
+      console.log(`[Game] ⚠️ OtherPlayer ${playerId} not found in map (may have already been removed)`)
+    }
+  }
+
+  private cleanupDuplicateAndOrphanedPlayers() {
+    if (!this.network.room || !this.network.room.state || !this.network.room.state.players) {
+      return
+    }
+    
+    const playersToRemove: string[] = []
+    const userIdToSessionMap = new Map<string, string>()
+    
+    // Build map of userId -> sessionId from current room state
+    this.network.room.state.players.forEach((player, playerId) => {
+      if (player.userId && player.userId !== '') {
+        const existingSessionId = userIdToSessionMap.get(player.userId)
+        if (existingSessionId) {
+          // Duplicate userId found - keep the newer one (current playerId)
+          console.log(`[Game] 🔍 [Periodic Cleanup] Found duplicate userId ${player.userId}: existing=${existingSessionId}, new=${playerId}`)
+          // Remove the older session
+          if (this.otherPlayerMap.has(existingSessionId)) {
+            console.log(`[Game] 🧹 [Periodic Cleanup] Marking old session for removal: ${existingSessionId}`)
+            playersToRemove.push(existingSessionId)
+          }
+        }
+        userIdToSessionMap.set(player.userId, playerId)
+      }
+    })
+    
+    // Check for orphaned players (not in room state anymore)
+    this.otherPlayerMap.forEach((_otherPlayer, mapPlayerId) => {
+      const stillExists = this.network.room?.state?.players?.get(mapPlayerId)
+      if (!stillExists) {
+        console.log(`[Game] 🧹 [Periodic Cleanup] Found orphaned OtherPlayer: ${mapPlayerId}`)
+        playersToRemove.push(mapPlayerId)
+      }
+    })
+    
+    // Remove duplicates and orphaned players
+    if (playersToRemove.length > 0) {
+      console.log(`[Game] 🧹 [Periodic Cleanup] Removing ${playersToRemove.length} duplicate/orphaned players`)
+      playersToRemove.forEach(playerId => {
+        const otherPlayer = this.otherPlayerMap.get(playerId)
+        if (otherPlayer) {
+          if (otherPlayer.playerContainer) {
+            otherPlayer.playerContainer.destroy(true)
+          }
+          this.otherPlayers.remove(otherPlayer, true, true)
+          this.otherPlayerMap.delete(playerId)
+        }
+      })
+      console.log(`[Game] ✅ [Periodic Cleanup] Cleaned up ${playersToRemove.length} players. Remaining: ${this.otherPlayerMap.size}`)
     }
   }
 
@@ -506,6 +778,13 @@ export default class Game extends Phaser.Scene {
     if (this.myPlayer && this.network) {
       this.playerSelector.update(this.myPlayer, this.cursors)
       this.myPlayer.update(this.playerSelector, this.cursors, this.keyE, this.network)
+    }
+  }
+  
+  shutdown() {
+    // Clean up interval when scene is shut down
+    if ((this as any).cleanupInterval) {
+      clearInterval((this as any).cleanupInterval)
     }
   }
 }

@@ -43,39 +43,39 @@ export default function PublicRoute({
     for (const { token, role, redirect } of tokens) {
       if (!token) continue;
 
-      try {
-        const decoded: any = jwtDecode(token);
-        const currentTime = Date.now() / 1000;
+    try {
+      const decoded: any = jwtDecode(token);
+      const currentTime = Date.now() / 1000;
 
-        // Check if token is expired
-        if (decoded.exp && decoded.exp < currentTime) {
+      // Check if token is expired
+      if (decoded.exp && decoded.exp < currentTime) {
           continue; // Token expired, try next one
-        }
+      }
 
         // Check if role matches
-        const tokenRole: string = decoded.role || '';
+      const tokenRole: string = decoded.role || '';
         if (tokenRole === role) {
           // If userType is specified, only redirect if role matches
           if (userType && userType !== role) {
             continue; // Role doesn't match userType, try next token
           }
 
-          return {
+      return {
             isAuthenticated: true,
             redirectPath: redirectTo || redirect
-          };
+      };
         }
-      } catch (error) {
+    } catch (error) {
         // Token is invalid, try next one
         continue;
       }
     }
 
     // No valid token found
-    return {
-      isAuthenticated: false,
+      return {
+        isAuthenticated: false,
       redirectPath: redirectTo || '/'
-    };
+      };
   }, [companyAccessToken, employeeAccessToken, adminAccessToken, userType, redirectTo]);
 
   // Get current pathname to prevent redirect loops

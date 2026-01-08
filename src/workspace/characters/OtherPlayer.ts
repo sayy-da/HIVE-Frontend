@@ -23,25 +23,44 @@ export default class OtherPlayer extends Player {
   }
 
   updateOtherPlayer(field: string, value: number | string) {
+    console.log(`[OtherPlayer ${this.playerId}] 🎯 updateOtherPlayer called:`, { field, value, currentPos: [this.x, this.y], targetPos: this.targetPosition })
     switch (field) {
       case 'name':
-        if (typeof value === 'string') this.playerName.setText(value)
+        if (typeof value === 'string') {
+          console.log(`[OtherPlayer ${this.playerId}] Setting name to:`, value)
+          this.playerName.setText(value)
+        }
         break
+
       case 'x':
-        if (typeof value === 'number') this.targetPosition[0] = value
+        if (typeof value === 'number') {
+          console.log(`[OtherPlayer ${this.playerId}] 📍 X updated: ${this.targetPosition[0]} -> ${value}`)
+          this.targetPosition[0] = value
+        }
         break
+
       case 'y':
-        if (typeof value === 'number') this.targetPosition[1] = value
+        if (typeof value === 'number') {
+          console.log(`[OtherPlayer ${this.playerId}] 📍 Y updated: ${this.targetPosition[1]} -> ${value}`)
+          this.targetPosition[1] = value
+        }
         break
+
       case 'anim':
-        if (typeof value === 'string') this.anims.play(value, true)
+        if (typeof value === 'string') {
+          console.log(`[OtherPlayer ${this.playerId}] 🎬 Animation updated:`, value)
+          this.anims.play(value, true)
+        }
         break
     }
   }
 
+  /** preUpdate is called every frame for every game object. */
   preUpdate(t: number, dt: number) {
     super.preUpdate(t, dt)
 
+    // If Phaser has not updated the canvas (when the game tab is not active) for more than 1 sec
+    // directly snap player to their current locations (SkyOffice pattern)
     if (this.lastUpdateTimestamp && t - this.lastUpdateTimestamp > 750) {
       this.lastUpdateTimestamp = t
       this.x = this.targetPosition[0]
@@ -52,13 +71,26 @@ export default class OtherPlayer extends Player {
     }
 
     this.lastUpdateTimestamp = t
-    this.setDepth(this.y)
+    this.setDepth(this.y) // change player.depth based on player.y
+    if (this.anims.currentAnim) {
+      const animParts = this.anims.currentAnim.key.split('_')
+      const animState = animParts[1]
+      if (animState === 'sit') {
+        const animDir = animParts[2]
+        if (animDir && animDir in sittingShiftData) {
+          const sittingShift = sittingShiftData[animDir as keyof typeof sittingShiftData]
+          // set hardcoded depth (differs between directions) if player sits down
+          this.setDepth(this.depth + sittingShift[2])
+        }
+      }
+    }
 
-    const speed = 200
-    const delta = (speed / 1000) * dt
+    const speed = 200 // speed is in unit of pixels per second
+    const delta = (speed / 1000) * dt // minimum distance that a player can move in a frame (dt is in unit of ms)
     let dx = this.targetPosition[0] - this.x
     let dy = this.targetPosition[1] - this.y
 
+    // if the player is close enough to the target position, directly snap the player to that position
     if (Math.abs(dx) < delta) {
       this.x = this.targetPosition[0]
       this.playerContainer.x = this.targetPosition[0]
@@ -70,6 +102,7 @@ export default class OtherPlayer extends Player {
       dy = 0
     }
 
+    // if the player is still far from target position, impose a constant velocity towards it
     let vx = 0
     let vy = 0
     if (dx > 0) vx += speed
@@ -77,8 +110,10 @@ export default class OtherPlayer extends Player {
     if (dy > 0) vy += speed
     else if (dy < 0) vy -= speed
 
+    // update character velocity
     this.setVelocity(vx, vy)
     this.body.velocity.setLength(speed)
+    // also update playerNameContainer velocity
     this.playContainerBody.setVelocity(vx, vy)
     this.playContainerBody.velocity.setLength(speed)
   }
