@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
-import { verifyEmployeeOTP, resendEmployeeOTP, verifyEmployeeLoginOTP } from '../../API/employeeAuth.api'
+import { verifyEmployeeOTP, resendEmployeeOTP, verifyEmployeeLoginOTP } from '../../API/employee.api'
 import { errorPopup } from '../../utils/popup'
 
 function EmployeeOtp() {
@@ -41,7 +41,8 @@ function EmployeeOtp() {
     try {
       if (mode === "login") {
         await verifyEmployeeLoginOTP(email, companyid, code);
-        navigate(`/employee/workspace?companyid=${companyid}`);
+        // Use replace: true to prevent back navigation to OTP page
+        navigate(`/employee/workspace?companyid=${companyid}`, { replace: true });
       } else {
         await verifyEmployeeOTP(email, code);
         navigate(`/employee/register?companyid=${companyid}`, { state: { email, companyid } });

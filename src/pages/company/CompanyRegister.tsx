@@ -1,25 +1,50 @@
-import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
+import { useDispatch, useSelector } from 'react-redux'
+import { jwtDecode } from 'jwt-decode'
 import signup from "../../assets/register-image.png"
-import { completeRegister } from '../../API/company.auth'
+import { completeRegister } from '../../API/auth.api'
+import { updateCompany } from '../../API/company.api'
 import { errorPopup, successPopup } from '../../utils/popup'
+import { login } from '../../features/company/companySlice'
+import { AppDispatch, RootState } from '../../store'
 
 function CompanyRegister() {
+  const dispatch: AppDispatch = useDispatch();
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams] = useSearchParams()
+  const { accessToken } = useSelector((state: RootState) => state.company);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
-  // Form state
+  const emailFromUrl = searchParams.get('email');
+  const token = searchParams.get('token');
+  
+
   const [formData, setFormData] = useState({
     name: '',
-    email: location.state?.email || '',
+    email: emailFromUrl || location.state?.email || '',
     count: '',
     address: '',
     password: '',
     confirmPassword: ''
   });
+
+  useEffect(() => {
+    if (accessToken && !token) {
+      navigate("/company", { replace: true });
+    }
+  }, [accessToken, navigate, token]);
+
+ 
+  useEffect(() => {
+    if (token && emailFromUrl) {
+      
+      setFormData(prev => ({ ...prev, email: emailFromUrl }));
+    }
+  }, [token, emailFromUrl]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -32,18 +57,26 @@ function CompanyRegister() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validation
-    if (!formData.name || !formData.email || !formData.count || !formData.address || !formData.password) {
-      errorPopup("Please fill in all fields");
+    
+    const isGoogleUser = !!token;
+
+   
+    if (!formData.name || !formData.email || !formData.count || !formData.address) {
+      errorPopup("Please fill in all required fields");
       return;
     }
 
-    if (formData.password !== formData.confirmPassword) {
+    if (!isGoogleUser && !formData.password) {
+      errorPopup("Password is required");
+      return;
+    }
+
+    if (formData.password && formData.password !== formData.confirmPassword) {
       errorPopup("Passwords do not match");
       return;
     }
 
-    if (formData.password.length < 8) {
+    if (formData.password && formData.password.length < 8) {
       errorPopup("Password must be at least 8 characters");
       return;
     }
@@ -51,16 +84,37 @@ function CompanyRegister() {
     setIsLoading(true);
 
     try {
-      await completeRegister({
-        email: formData.email,
-        name: formData.name,
-        count: parseInt(formData.count),
-        address: formData.address,
-        password: formData.password
-      });
+     
+      if (token) {
+        dispatch(login(token));
+        
+       
+        const decoded: any = jwtDecode(token);
+        const companyId = decoded.sub || decoded._id;
 
-      successPopup("Registration completed successfully! You can now login.");
-      navigate("/login");
+       
+        await updateCompany(companyId, {
+          name: formData.name,
+          count: parseInt(formData.count),
+          address: formData.address,
+
+        });
+
+        successPopup("Profile completed successfully!");
+        navigate("/company", { replace: true });
+      } else {
+     
+        await completeRegister({
+          email: formData.email,
+          name: formData.name,
+          count: parseInt(formData.count),
+          address: formData.address,
+          password: formData.password
+        });
+
+        successPopup("Registration completed successfully! You can now login.");
+        navigate("/company/login");
+      }
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.response?.data?.message || "Registration failed. Please try again.";
       errorPopup(errorMessage);
@@ -214,7 +268,7 @@ function CompanyRegister() {
             Already registered?{" "}
             <button 
               type="button" 
-              onClick={() => navigate("/login")}
+              onClick={() => navigate("/company/login")}
               className="text-black font-medium hover:underline"
               disabled={isLoading}
             >

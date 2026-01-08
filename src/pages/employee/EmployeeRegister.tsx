@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useDispatch } from 'react-redux'
 import signup from "../../assets/register-image.png"
-import { completeEmployeeRegister } from '../../API/employeeAuth.api'
+import { completeEmployeeRegister } from '../../API/employee.api'
 import { errorPopup } from '../../utils/popup'
 import { setEmployeeData } from '../../features/employee/employeeSlice'
 

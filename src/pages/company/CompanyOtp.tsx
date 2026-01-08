@@ -1,17 +1,26 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { verifyOTP, resendOTP } from '../../API/company.auth'
+import { useSelector } from 'react-redux'
+import { verifyOTP, resendOTP } from '../../API/auth.api'
 import { errorPopup } from '../../utils/popup'
+import { RootState } from '../../store'
 
 function CompanyOtp() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { accessToken } = useSelector((state: RootState) => state.company);
   const [code, setCode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
   
-  // Get email from location state
+
   const email = location.state?.email || "";
+
+  useEffect(() => {
+    if (accessToken) {
+      navigate("/company", { replace: true });
+    }
+  }, [accessToken, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,7 +32,7 @@ function CompanyOtp() {
 
     if (!email) {
       errorPopup("Email not found. Please start registration again.");
-      navigate("/getStart");
+      navigate("/company/getStart");
       return;
     }
 
@@ -31,7 +40,7 @@ function CompanyOtp() {
 
     try {
       await verifyOTP(email, code);
-      navigate("/register", { state: { email } });
+      navigate("/company/register", { state: { email } });
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.response?.data?.message || "Invalid OTP. Please try again.";
       errorPopup(errorMessage);
@@ -43,7 +52,7 @@ function CompanyOtp() {
   const handleResend = async () => {
     if (!email) {
       errorPopup("Email not found. Please start registration again.");
-      navigate("/getStart");
+      navigate("/company/getStart");
       return;
     }
 

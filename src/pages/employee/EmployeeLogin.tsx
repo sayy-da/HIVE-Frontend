@@ -1,24 +1,38 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { useDispatch } from 'react-redux'
+import { useSelector } from 'react-redux'
+import { RootState } from '../../store'
 import Login_image from "../../assets/login-image.png"
-import { checkEmployeeStatus, registerEmployee, requestEmployeeLoginOTP } from '../../API/employeeAuth.api'
+import { employeeLogin } from '../../API/employee.api'
 import { errorPopup } from '../../utils/popup'
-import { setEmployeeData } from '../../features/employee/employeeSlice'
 
 function EmployeeLogin() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const dispatch = useDispatch()
+  const employee = useSelector((state: RootState) => state.employee)
   const companyid = searchParams.get("companyid")
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Redirect to workspace if already authenticated
+  useEffect(() => {
+    if (employee.accessToken) {
+      const companyIdParam = companyid || employee.companyId;
+      if (companyIdParam) {
+        navigate(`/employee/workspace?companyid=${companyIdParam}`, { replace: true });
+      } else {
+        navigate("/employee/workspace", { replace: true });
+      }
+    }
+  }, [employee.accessToken, navigate, companyid, employee.companyId]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     
-    if (!email) {
-      errorPopup("Please enter your email");
+    if (!email || !password) {
+      errorPopup("Please enter your email and password");
       return;
     }
 
@@ -30,28 +44,17 @@ function EmployeeLogin() {
     setIsLoading(true);
 
     try {
-      
-      const statusResponse = await checkEmployeeStatus(email, companyid);
-      const status = statusResponse.status;
-
-      if (status === "not registered") {
-        await registerEmployee(email, companyid);
-        dispatch(setEmployeeData({ email, companyId: companyid || "" }));
-        navigate(`/employee/otp?companyid=${companyid}`, { state: { email, companyid, mode: "register" } });
-      } else if (status === "approved") {
-        await requestEmployeeLoginOTP(email, companyid);
-        dispatch(setEmployeeData({ email, companyId: companyid || "", status: "approved" }));
-        navigate(`/employee/otp?companyid=${companyid}`, { state: { email, companyid, mode: "login" } });
-      } else if (status === "requested") {
-        errorPopup("Your registration is pending approval. Please contact your administrator.");
-      } else if (status === "rejected") {
-        errorPopup("Your registration has been rejected. Please contact your administrator.");
-      } else {
-        errorPopup("Unknown status. Please contact support.");
+      const accessToken = await employeeLogin(email, companyid, password);
+      if (accessToken) {
+        // Use replace: true to prevent back navigation to login page
+        if (companyid) {
+          navigate(`/employee/workspace?companyid=${companyid}`, { replace: true });
+        } else {
+          navigate("/employee/workspace", { replace: true });
+        }
       }
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || error.response?.data?.message || "Something went wrong. Please try again.";
-      errorPopup(errorMessage);
+      // Error is already handled by axios interceptor
     } finally {
       setIsLoading(false);
     }
@@ -99,6 +102,46 @@ function EmployeeLogin() {
                   disabled={isLoading}
                 />
               </div>
+            </div>
+
+            <div>
+              <label htmlFor="password" className="sr-only">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full border-b border-gray-300 focus:outline-none focus:border-black px-2 py-2 text-sm"
+                  required
+                  disabled={isLoading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  disabled={isLoading}
+                  className="absolute right-0 top-1/2 -translate-y-1/2 text-sm opacity-75 px-2 disabled:opacity-50"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={() => navigate(`/employee/forgot-password${companyid ? `?companyid=${companyid}` : ''}`)}
+                className="text-sm text-indigo-600 hover:underline"
+                disabled={isLoading}
+              >
+                Forgot password?
+              </button>
             </div>
 
             <div>

@@ -2,11 +2,30 @@ import axios, { AxiosRequestConfig } from "axios";
 import store from "../store";
 import { IApiResponseError, IResponse } from "../types/responseType";
 import { login as companyLogin, logout as companyLogout } from "../features/company/companySlice";
-import { login as employeeLogin, logout as employeeLogout } from "../features/employee/employeeSlice";
-import { BACKEND_BASE_URL, REFRESH_TOKEN_API } from "../constants";
+import { login as employeeLogin, logout as employeeLogout, setAccessToken as setEmployeeAccessToken } from "../features/employee/employeeSlice";
+import { login as adminLogin, logout as adminLogout } from "../features/admin/adminSlice";
+import { BACKEND_BASE_URL } from "../constants";
 import { errorPopup } from "../utils/popup";
-import { refreshApi } from "./axiosRefresh"; 
+import { refreshApi } from "./axiosRefresh";
+import { jwtDecode } from "jwt-decode"; 
 
+
+/**
+ * Check if a token is valid (not expired)
+ */
+const isTokenValid = (token: string | null | undefined): boolean => {
+  if (!token) return false;
+  try {
+    const decoded: any = jwtDecode(token);
+    const currentTime = Date.now() / 1000;
+    if (decoded.exp && decoded.exp < currentTime) {
+      return false; // Token expired
+    }
+    return true; // Token is valid
+  } catch (error) {
+    return false; // Token is invalid/malformed
+  }
+};
 
 const getErrorMessage = (errData: any): string => {
   if (!errData) return "Some error occurred";
@@ -54,14 +73,69 @@ appApi.interceptors.request.use(
     const state = store.getState();
     const { accessToken: employeeToken } = state.employee;
     const { accessToken: companyToken } = state.company;
+    const { accessToken: adminToken } = state.admin;
 
-
-    const isEmployeeRoute = config.url?.includes('/employe') || config.url?.includes('/employee');
+    // Route detection: Check URL with or without leading slash
+    // Employee routes start with 'employe' (not 'employees' which is company route)
+    const url = config.url || '';
+    // Check for admin routes - must be at the start of the path segment
+    const isAdminRoute = /^\/?admin(\/|$)/.test(url) && !url.includes('/auth/admin') && !url.includes('auth/admin');
+    // Check for employee routes
+    const isEmployeeRoute = /^\/?employe(\/|$)/.test(url) && 
+                            !/^\/?employees(\/|$)/.test(url);
+    // Special case: routes that allow both company and employee users
+    const isCreateProfileRoute = url.includes('create-profile');
     
-    const token = isEmployeeRoute ? employeeToken : companyToken;
+    let token: string | undefined;
+    if (isAdminRoute) {
+      // For admin routes, ONLY use adminToken
+      // Never fall back to companyToken to prevent role confusion
+      // If no admin token exists, don't send any token (will result in 401)
+      token = adminToken || undefined;
+      if (!token) {
+        console.warn("Admin route accessed without admin token:", config.url);
+        // Don't send any token - let the request fail with 401
+      }
+    } else if (isEmployeeRoute) {
+      // For employee routes, use employee token
+      // Exception: create-profile route allows company users too
+      // For create-profile, prefer company token (company users typically create employee profiles)
+      // Only use employee token if company token is not available or invalid
+      if (isCreateProfileRoute) {
+        if (isTokenValid(companyToken)) {
+          token = companyToken;
+        } else if (isTokenValid(employeeToken)) {
+          token = employeeToken;
+        } else {
+          token = companyToken || employeeToken; // Fallback to whatever exists (will fail with 401 if invalid)
+        }
+      } else {
+        // For other employee routes, use employee token (must be valid)
+        token = isTokenValid(employeeToken) ? employeeToken : undefined;
+      }
+    } else {
+      // For company routes, ONLY use companyToken
+      token = companyToken;
+    }
 
+    // Debug logging for token attachment
+    if (url.includes('/company/employee/') && !token) {
+      console.warn("Company employee route accessed without company token:", {
+        url: config.url,
+        hasCompanyToken: !!companyToken,
+        hasEmployeeToken: !!employeeToken,
+        hasAdminToken: !!adminToken
+      });
+    }
+
+    // Only set Authorization header if we have a valid token
+    // This prevents sending wrong tokens
     if (token && config.headers) {
       config.headers["Authorization"] = `Bearer ${token}`;
+    } else if (!token && url.includes('/company/') && !url.includes('/auth/')) {
+      // Only warn for non-auth company routes that require tokens
+      // Auth routes like /auth/company/login don't need tokens
+      console.warn("Company route accessed without token - will result in 401:", config.url);
     }
 
     return config;
@@ -88,18 +162,71 @@ appApi.interceptors.response.use(
     ) {
       originalRequest._retry = true;
 
-      try {
-        const res = await refreshApi.get(REFRESH_TOKEN_API);
-        const newAccessToken = (res?.data as any)?.data as string;
+      // Route detection: Get the URL from the request
+      // originalRequest.url is relative to baseURL, so it should start with /
+      const requestUrl = originalRequest.url || '';
+      
+      // Check current token state to determine which refresh endpoint to use
+      const state = store.getState();
+      const hasAdminToken = !!state.admin.accessToken;
+      const hasCompanyToken = !!state.company.accessToken;
+      
+      // Check if URL contains route patterns (simple and reliable)
+      // Admin routes: must be at the start of the path segment, not auth/admin
+      const isAdminRoute = /\/?admin(\/|$)/.test(requestUrl) && 
+                           !requestUrl.includes('/auth/admin') && !requestUrl.includes('auth/admin');
+      // Employee routes: employe (but not employees which is company route)
+      const isEmployeeRoute = /\/?employe(\/|$)/.test(requestUrl) && 
+                              !/\/?employees(\/|$)/.test(requestUrl);
+      
+      // Determine which refresh endpoint to use
+      // Priority: route detection > token state
+      const hasEmployeeToken = !!state.employee.accessToken;
+      
+      let refreshEndpoint: string;
+      let userType: 'company' | 'employee' | 'admin' = 'company';
+      
+      if (isEmployeeRoute && hasEmployeeToken) {
+        // Employee route with employee token - use employee refresh
+        refreshEndpoint = "/auth/employee/refresh";
+        userType = 'employee';
+      } else if (isAdminRoute) {
+        // For admin routes, ONLY use admin refresh if admin token exists
+        if (!hasAdminToken) {
+          store.dispatch(adminLogout());
+          console.error("Admin route accessed without admin token - redirecting to login");
+          return Promise.reject(error);
+        }
+        refreshEndpoint = "/auth/admin/refresh";
+        userType = 'admin';
+      } else if (hasAdminToken && !hasCompanyToken && !hasEmployeeToken) {
+        // Fallback: if only admin token exists, use admin refresh
+        refreshEndpoint = "/auth/admin/refresh";
+        userType = 'admin';
+      } else {
+        // Default to company refresh
+        refreshEndpoint = "/auth/company/refresh";
+        userType = 'company';
+      }
 
-        if (!newAccessToken) {
+      // Try to refresh token (all user types now support refresh)
+      try {
+        const res = await refreshApi.get(refreshEndpoint);
+        
+        // Backend returns: { data: accessToken } for employee, { success: true, message: "...", data: accessToken } for company/admin
+        const responseData = res?.data;
+        const newAccessToken = responseData?.data || responseData;
+
+        if (!newAccessToken || typeof newAccessToken !== 'string') {
+          console.error("Refresh response structure:", responseData);
           throw new Error("Refresh did not return a new access token");
         }
-
-        const isEmployeeRoute = originalRequest.url?.includes('/employe') || originalRequest.url?.includes('/employee');
         
-        if (isEmployeeRoute) {
-          store.dispatch(employeeLogin(newAccessToken));
+        // Update the correct slice based on user type
+        if (userType === 'employee') {
+          store.dispatch(setEmployeeAccessToken(newAccessToken));
+        } else if (userType === 'admin') {
+          store.dispatch(adminLogin(newAccessToken));
         } else {
           store.dispatch(companyLogin(newAccessToken));
         }
@@ -112,11 +239,11 @@ appApi.interceptors.response.use(
 
         return appApi(originalRequest);
       } catch (err) {
-        
-        const isEmployeeRoute = originalRequest.url?.includes('/employe') || originalRequest.url?.includes('/employee');
-        
-        if (isEmployeeRoute) {
+        // Refresh failed - logout user
+        if (userType === 'employee') {
           store.dispatch(employeeLogout());
+        } else if (userType === 'admin') {
+          store.dispatch(adminLogout());
         } else {
           store.dispatch(companyLogout());
         }
@@ -125,15 +252,25 @@ appApi.interceptors.response.use(
       }
     }
 
-    if (status === 403 && (errData?.error === "Blocked" || errMessage === "Blocked")) {
-      errorPopup("You are blocked by admin");
-      const isEmployeeRoute = originalRequest?.url?.includes('/employe') || originalRequest?.url?.includes('/employee');
-      
-      if (isEmployeeRoute) {
-        store.dispatch(employeeLogout());
-      } else {
-        store.dispatch(companyLogout());
+    if (status === 403) {
+      // 403 means forbidden - user doesn't have the right role or is blocked
+      if (errData?.error === "Blocked" || errMessage === "Blocked") {
+        errorPopup("You are blocked by admin");
       }
+      // For role mismatch errors, don't show popup - component should handle it
+      // Don't logout on 403 - just reject the promise
+      return Promise.reject(error);
+    }
+
+    // Handle connection errors with helpful messages
+    if (
+      error.code === 'ECONNREFUSED' || 
+      error.message?.includes('ERR_CONNECTION_REFUSED') ||
+      error.message?.includes('Network Error') ||
+      (!error.response && error.request)
+    ) {
+      errorPopup("Cannot connect to server. Please make sure the backend server is running on " + BACKEND_BASE_URL);
+      return Promise.reject(error);
     }
 
     errorPopup(errMessage || "Some error occurred");

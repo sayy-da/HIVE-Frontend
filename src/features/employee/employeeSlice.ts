@@ -9,25 +9,26 @@ interface IEmployee {
   address: string;
   role: "admin" | "user";
   companyId: string;
-  status: "requested" | "approved" | "rejected";
-  active: boolean;
+  status: "pending" | "active" | "inactive";
   isEmailVerified: boolean;
   accessToken: string;
+  characterTexture?: string; // Avatar: 'adam', 'ash', 'lucy', 'nancy'
 }
 
+// Memory-only storage - no localStorage for security
 const initialState: IEmployee = {
-  _id: "",
-  name: "",
-  email: "",
-  position: "",
-  address: "",
-  role: "user",
-  companyId: "",
-  status: "requested",
-  active: false,
-  isEmailVerified: false,
-  accessToken: "",
-};
+    _id: "",
+    name: "",
+    email: "",
+    position: "",
+    address: "",
+    role: "user",
+    companyId: "",
+    status: "pending",
+    isEmailVerified: false,
+    characterTexture: "adam",
+    accessToken: "",
+  };
 
 const employeeSlice = createSlice({
   name: "employee",
@@ -39,18 +40,37 @@ const employeeSlice = createSlice({
       try {
         const decoded: any = jwtDecode(token);
 
+        // Debug logging in development
+        if (import.meta.env.DEV) {
+          console.log('[EmployeeSlice] Decoding token payload:', {
+            hasCompanyId: !!decoded.companyId,
+            companyId: decoded.companyId,
+            hasEmail: !!decoded.email,
+            hasStatus: !!decoded.status,
+            allKeys: Object.keys(decoded)
+          });
+        }
+
         state._id = decoded._id || decoded.sub || state._id;
         state.name = decoded.name ?? state.name;
         state.email = decoded.email ?? state.email;
         state.position = decoded.position ?? state.position;
         state.address = decoded.address ?? state.address;
         state.role = decoded.role ?? state.role;
-        state.companyId = decoded.companyId ?? state.companyId;
+        // Only update companyId if it exists in token, otherwise keep existing value
+        if (decoded.companyId) {
+          state.companyId = decoded.companyId;
+        } else if (!state.companyId) {
+          // If companyId is missing from token and state, log warning
+          console.warn('[EmployeeSlice] CompanyId missing from token and state');
+        }
         state.status = decoded.status ?? state.status;
-        state.active = decoded.active ?? state.active;
         state.isEmailVerified = decoded.isEmailVerified ?? state.isEmailVerified;
+        state.characterTexture = decoded.characterTexture ?? state.characterTexture ?? "adam";
 
         state.accessToken = token;
+        
+        // Memory-only storage - no localStorage for security
       } catch (error) {
         console.error("Error decoding employee token:", error);
       }
@@ -65,15 +85,18 @@ const employeeSlice = createSlice({
         address: "",
         role: "user",
         companyId: "",
-        status: "requested",
-        active: false,
+        status: "pending",
         isEmailVerified: false,
+        characterTexture: "adam",
         accessToken: "",
       });
+      
+    // Memory-only storage - no localStorage cleanup needed
     },
 
     setAccessToken: (state, action: PayloadAction<string>) => {
       state.accessToken = action.payload;
+      // Memory-only storage - no localStorage
     },
 
     setEmployeeData: (state, action: PayloadAction<Partial<IEmployee>>) => {
