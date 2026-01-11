@@ -77,12 +77,13 @@ appApi.interceptors.request.use(
 
     // Route detection: Check URL with or without leading slash
     // Employee routes start with 'employe' (not 'employees' which is company route)
+    // Also include '/chat' routes as employee routes
     const url = config.url || '';
     // Check for admin routes - must be at the start of the path segment
     const isAdminRoute = /^\/?admin(\/|$)/.test(url) && !url.includes('/auth/admin') && !url.includes('auth/admin');
-    // Check for employee routes
-    const isEmployeeRoute = /^\/?employe(\/|$)/.test(url) && 
-                            !/^\/?employees(\/|$)/.test(url);
+    // Check for employee routes - includes /employe and /chat routes
+    const isEmployeeRoute = (/^\/?employe(\/|$)/.test(url) && !/^\/?employees(\/|$)/.test(url)) ||
+                            /^\/?chat(\/|$)/.test(url);
     // Special case: routes that allow both company and employee users
     const isCreateProfileRoute = url.includes('create-profile');
     
@@ -175,9 +176,10 @@ appApi.interceptors.response.use(
       // Admin routes: must be at the start of the path segment, not auth/admin
       const isAdminRoute = /\/?admin(\/|$)/.test(requestUrl) && 
                            !requestUrl.includes('/auth/admin') && !requestUrl.includes('auth/admin');
-      // Employee routes: employe (but not employees which is company route)
-      const isEmployeeRoute = /\/?employe(\/|$)/.test(requestUrl) && 
-                              !/\/?employees(\/|$)/.test(requestUrl);
+      // Employee routes: employe (but not employees which is company route) OR /chat routes
+      const isEmployeeRoute = (/\/?employe(\/|$)/.test(requestUrl) && 
+                              !/\/?employees(\/|$)/.test(requestUrl)) ||
+                              /\/?chat(\/|$)/.test(requestUrl);
       
       // Determine which refresh endpoint to use
       // Priority: route detection > token state
@@ -265,11 +267,21 @@ appApi.interceptors.response.use(
     // Handle connection errors with helpful messages
     if (
       error.code === 'ECONNREFUSED' || 
+      error.code === 'ERR_NETWORK' ||
       error.message?.includes('ERR_CONNECTION_REFUSED') ||
       error.message?.includes('Network Error') ||
       (!error.response && error.request)
     ) {
-      errorPopup("Cannot connect to server. Please make sure the backend server is running on " + BACKEND_BASE_URL);
+      const errorMsg = `Cannot connect to server at ${BACKEND_BASE_URL}/api.\n\nPlease check:\n1. Backend server is running\n2. Backend URL is correct\n3. No firewall blocking the connection`;
+      console.error('[Axios] Network Error:', {
+        code: error.code,
+        message: error.message,
+        url: originalRequest?.url,
+        baseURL: BACKEND_BASE_URL,
+        fullURL: BACKEND_BASE_URL + '/api' + (originalRequest?.url || ''),
+        request: error.request
+      });
+      errorPopup(errorMsg);
       return Promise.reject(error);
     }
 

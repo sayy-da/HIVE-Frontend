@@ -8,6 +8,8 @@ import CompanyOtp from "./pages/company/CompanyOtp";
 import CompanyForgotPassword from "./pages/company/CompanyForgotPassword";
 import CompanyResetPassword from "./pages/company/CompanyResetPassword";
 import OAuthSuccess from "./pages/company/OAuthSuccess";
+import ChatApp from "./pages/employee/ChatPage";
+import TeamCollaboration from "./pages/employee/ChatPage";
 const CompanyDashboard = lazy(() => import("./pages/company/CompanyDashboard"));
 const CompanyProfile = lazy(() => import("./pages/company/CompanyProfile"));
 const EmployeeLogin = lazy(() => import("./pages/employee/EmployeeLogin"));
@@ -17,6 +19,7 @@ const EmployeePasswordSetup = lazy(() => import("./pages/employee/EmployeePasswo
 const EmployeeForgotPassword = lazy(() => import("./pages/employee/EmployeeForgotPassword"));
 const EmployeeResetPassword = lazy(() => import("./pages/employee/EmployeeResetPassword"));
 const EmployeeWorkspace = lazy(() => import("./pages/Workspace/Office"));
+const EmployeeChat = lazy(() => import("./pages/employee/ChatPage"));
 const AdminLogin = lazy(() => import("./pages/admin/AdminLogin"));
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
 
@@ -140,6 +143,12 @@ export const employeeRoutes: Routes = [
     isProtected: true,
     userType: 'employee',
   },
+  {
+    path: "employee/chat",
+    Component: EmployeeChat,
+    isProtected: true,
+    userType: 'employee',
+  },
 ];
 
 // Admin routes
@@ -158,3 +167,17 @@ export const adminRoutes: Routes = [
   },
 ];
 
+export const websocketRoutes: Routes = [
+ {
+    path: "chat",
+    Component: ChatApp,
+    isPublic: true,
+    userType: 'employee',
+  },
+  {
+    path: "call",
+    Component: TeamCollaboration,
+    isPublic: true,
+    userType: 'employee',
+  }
+];

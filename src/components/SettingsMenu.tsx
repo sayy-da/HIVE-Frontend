@@ -7,7 +7,7 @@ import { logoutEmployee, getEmployeeProfile, changeEmployeePassword, updateEmplo
 import { updateEmployeeAvatar } from '../API/employee.api'
 import { setEmployeeData } from '../features/employee/employeeSlice'
 import { Employee } from '../API/company.api'
-import { Settings, LogOut, User, KeyRound, UserCircle, X, Eye, EyeOff, Edit, Save } from 'lucide-react'
+import { Settings, LogOut, User, KeyRound, UserCircle, X, Eye, EyeOff, Edit, Save, MessageCircle } from 'lucide-react'
 import { successPopup, errorPopup } from '../utils/popup'
 
 const avatars = [
@@ -313,6 +313,22 @@ export default function SettingsMenu() {
               >
                 <KeyRound className="h-5 w-5" />
                 <span>Change Password</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  const companyIdParam = searchParams.get('companyid') || employee.companyId
+                  if (companyIdParam) {
+                    navigate(`/employee/chat?companyid=${companyIdParam}`)
+                  } else {
+                    navigate('/employee/chat')
+                  }
+                }}
+                className="w-full px-4 py-3 text-left flex items-center gap-3 hover:bg-gray-50 transition-colors text-gray-700"
+              >
+                <MessageCircle className="h-5 w-5" />
+                <span>Chat</span>
               </button>
 
               <div className="border-t border-gray-200 my-1" />

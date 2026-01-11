@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Routes, Route } from "react-router-dom";
-import { PublicRoutes, companyRoutes, employeeRoutes, adminRoutes } from "./router";
+import { PublicRoutes, companyRoutes, employeeRoutes, adminRoutes,websocketRoutes } from "./router";
 import PublicRoute from "./components/auth/PublicRoute";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 
@@ -9,7 +9,7 @@ function App() {
   return (
     <Suspense fallback={<div>Loading...</div>}>
       <Routes>
-        {[...PublicRoutes, ...companyRoutes, ...employeeRoutes, ...adminRoutes].map(
+        {[...PublicRoutes, ...companyRoutes, ...employeeRoutes, ...adminRoutes,...websocketRoutes].map(
           ({ path, Component, isPublic, isProtected, userType }) => {
           const normalizedPath = path ? `/${path}` : "/";
           
